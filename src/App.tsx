@@ -101,6 +101,7 @@ export default function App() {
         inputs={inputs}
         setInputs={setInputs}
         showScaiToggles={mode === 'shock'}
+        derived={derived}
       />
 
       <ResultsPanel flags={flags} />

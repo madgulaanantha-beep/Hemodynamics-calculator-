@@ -8,6 +8,14 @@ export function formatSummary(
   phenotype: string,
 ): string {
   const n = (v: number | null) => (v === null || v === undefined ? '—' : String(v));
+  const coSrc =
+    d.coSource === 'fick'
+      ? 'Fick'
+      : d.coSource === 'thermo'
+        ? 'Thermo'
+        : d.coSource === 'ci_bsa'
+          ? 'CI×BSA'
+          : '—';
 
   return [
     'HEMODYNAMICS SUMMARY (educational — not a medical device)',
@@ -18,12 +26,19 @@ export function formatSummary(
     `PASP/PADP: ${n(inputs.pasp)} / ${n(inputs.padp)} mmHg`,
     `mPAP: ${n(d.mpap)} mmHg`,
     `PCWP: ${n(inputs.pcwp)} mmHg`,
+    `CO source: ${coSrc}`,
     `CO: ${n(d.co)} L/min`,
     `CI: ${n(d.ci)} L/min/m²`,
-    `BSA: ${n(inputs.bsa)} m²`,
+    `BSA: ${n(d.bsa ?? inputs.bsa)} m²`,
     `HR: ${n(inputs.hr)} bpm`,
     `SBP/DBP: ${n(inputs.sbp)} / ${n(inputs.dbp)} mmHg`,
     `MAP: ${n(d.map)} mmHg`,
+    '--- Indirect Fick ---',
+    `Hb / SaO₂ / SvO₂: ${n(inputs.hb)} g/dL / ${n(inputs.sao2)}% / ${n(inputs.svo2)}%`,
+    `VO₂ mode: ${inputs.vo2Mode}`,
+    `VO₂ used: ${n(d.fickVo2)} mL/min`,
+    `AV O₂ diff: ${n(d.fickAvO2Diff)} mL/L`,
+    `Fick CO / CI: ${n(d.fickCo)} L/min / ${n(d.fickCi)} L/min/m²`,
     '--- Derived ---',
     `SV/SVI: ${n(d.sv)} mL / ${n(d.svi)} mL/m²`,
     `SVR/SVRI: ${n(d.svr)} / ${n(d.svri)}`,

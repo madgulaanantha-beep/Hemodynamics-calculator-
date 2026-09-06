@@ -4,7 +4,10 @@ import type {
   HemodynamicsInputs,
   PhenotypeAssessment,
   ScaiAssessment,
+  Sex,
+  Vo2Mode,
 } from './types';
+import { DEFAULT_O2_BINDING, DEFAULT_VO2_CONSTANT } from './types';
 
 /** Round to `digits` decimal places; null-safe. */
 export function round(n: number | null | undefined, digits = 2): number | null {
@@ -31,7 +34,105 @@ export function calcMpap(pasp: number | null, padp: number | null, mpapOverride:
   return null;
 }
 
-/** Fick CO = VO2 / ((CaO2 − CvO2) × 10) when contents in mL O2/dL; VO2 in mL/min → L/min */
+/**
+ * Mosteller BSA (m²) = √(height_cm × weight_kg / 3600)
+ */
+export function calcBsaMosteller(heightCm: number | null, weightKg: number | null): number | null {
+  if (!isPresent(heightCm) || !isPresent(weightKg) || heightCm <= 0 || weightKg <= 0) return null;
+  return Math.sqrt((heightCm * weightKg) / 3600);
+}
+
+/** Prefer direct BSA; else Mosteller from height/weight. */
+export function resolveBsa(inputs: HemodynamicsInputs): number | null {
+  if (isPresent(inputs.bsa) && inputs.bsa > 0) return inputs.bsa;
+  return calcBsaMosteller(inputs.heightCm, inputs.weightKg);
+}
+
+/**
+ * Arteriovenous O₂ content difference in mL O₂ per L blood.
+ *
+ * Formula (Sa/Sv as percentages 0–100):
+ *   CaO₂ − CvO₂ (mL/L) = Hb (g/dL) × Hufner × (SaO₂% − SvO₂%) / 10
+ *
+ * Default Hufner (O₂ binding) = 1.36 mL O₂ / g Hb.
+ * Equivalents:
+ *   - With fractions: Hb × 1.36 × (Sa − Sv) × 10
+ *   - Content in mL/dL then ×10: Hb × 1.36 × ΔSat%/100 × 10 = same
+ *
+ * Dissolved O₂ (0.0031 × PaO₂) is omitted (standard indirect Fick bedside form).
+ */
+export function calcAvO2DiffMlPerL(
+  hb: number | null,
+  sao2Pct: number | null,
+  svo2Pct: number | null,
+  o2Binding: number | null = DEFAULT_O2_BINDING,
+): number | null {
+  if (!isPresent(hb) || !isPresent(sao2Pct) || !isPresent(svo2Pct) || hb <= 0) return null;
+  const hufner = isPresent(o2Binding) && o2Binding > 0 ? o2Binding : DEFAULT_O2_BINDING;
+  const delta = sao2Pct - svo2Pct;
+  if (delta <= 0) return null;
+  return (hb * hufner * delta) / 10;
+}
+
+/**
+ * Estimated VO₂ (Dehmer-style): VO₂ (mL/min) = constant (mL/min/m²) × BSA (m²).
+ * Default constant = 125 (commonly 110–150 range clinically).
+ */
+export function calcVo2Estimated(
+  bsa: number | null,
+  constant: number | null = DEFAULT_VO2_CONSTANT,
+): number | null {
+  if (!isPresent(bsa) || bsa <= 0) return null;
+  const k = isPresent(constant) && constant > 0 ? constant : DEFAULT_VO2_CONSTANT;
+  return k * bsa;
+}
+
+/**
+ * LaFarge & Miettinen estimated VO₂ (mL/min):
+ *   Male:   (138.1 − 11.49 × ln(age) + 0.378 × HR) × BSA
+ *   Female: (138.1 − 17.04 × ln(age) + 0.378 × HR) × BSA
+ * Age in years, HR in bpm, BSA in m².
+ */
+export function calcVo2LaFarge(
+  bsa: number | null,
+  ageYears: number | null,
+  hr: number | null,
+  sex: Sex | null,
+): number | null {
+  if (!isPresent(bsa) || bsa <= 0) return null;
+  if (!isPresent(ageYears) || ageYears <= 0) return null;
+  if (!isPresent(hr) || hr <= 0) return null;
+  if (sex !== 'male' && sex !== 'female') return null;
+  const ageTerm = sex === 'male' ? 11.49 : 17.04;
+  const index = 138.1 - ageTerm * Math.log(ageYears) + 0.378 * hr;
+  if (index <= 0) return null;
+  return index * bsa;
+}
+
+/** Resolve VO₂ (mL/min) from mode + inputs. */
+export function resolveVo2(inputs: HemodynamicsInputs, bsa: number | null): number | null {
+  const mode: Vo2Mode = inputs.vo2Mode ?? 'estimated';
+  if (mode === 'measured') {
+    return isPresent(inputs.vo2Measured) && inputs.vo2Measured > 0 ? inputs.vo2Measured : null;
+  }
+  if (mode === 'lafarge') {
+    return calcVo2LaFarge(bsa, inputs.ageYears, inputs.hr, inputs.sex);
+  }
+  return calcVo2Estimated(bsa, inputs.vo2Constant);
+}
+
+/**
+ * Indirect Fick CO (L/min) = VO₂ (mL/min) / [CaO₂ − CvO₂] (mL O₂ / L blood)
+ */
+export function calcIndirectFickCo(vo2: number | null, avO2DiffMlPerL: number | null): number | null {
+  if (!isPresent(vo2) || !isPresent(avO2DiffMlPerL) || vo2 <= 0 || avO2DiffMlPerL <= 0) return null;
+  return vo2 / avO2DiffMlPerL;
+}
+
+/**
+ * Legacy helper: Fick CO when CaO₂/CvO₂ are already in mL O₂/dL.
+ * CO = VO₂ / ((CaO₂ − CvO₂) × 10)
+ */
 export function calcFickCo(vo2: number | null, cao2: number | null, cvo2: number | null): number | null {
   if (!isPresent(vo2) || !isPresent(cao2) || !isPresent(cvo2)) return null;
   const avDiff = cao2 - cvo2;
@@ -39,23 +140,51 @@ export function calcFickCo(vo2: number | null, cao2: number | null, cvo2: number
   return vo2 / (avDiff * 10);
 }
 
-/** Resolve CO from direct entry, CI×BSA, or Fick. */
-export function resolveCo(inputs: HemodynamicsInputs): number | null {
+/** Full indirect Fick bundle from hemodynamics inputs. */
+export function computeIndirectFick(inputs: HemodynamicsInputs): {
+  bsa: number | null;
+  vo2: number | null;
+  avO2Diff: number | null;
+  co: number | null;
+  ci: number | null;
+} {
+  const bsa = resolveBsa(inputs);
+  const vo2 = resolveVo2(inputs, bsa);
+  const avO2Diff = calcAvO2DiffMlPerL(inputs.hb, inputs.sao2, inputs.svo2, inputs.o2Binding);
+  const co = calcIndirectFickCo(vo2, avO2Diff);
+  const ci = isPresent(co) && isPresent(bsa) && bsa > 0 ? co / bsa : null;
+  return { bsa, vo2, avO2Diff, co, ci };
+}
+
+/** Resolve CO from Fick (preferred when toggled), direct entry, or CI×BSA. */
+export function resolveCo(inputs: HemodynamicsInputs): {
+  co: number | null;
+  source: DerivedMetrics['coSource'];
+  fick: ReturnType<typeof computeIndirectFick>;
+} {
+  const fick = computeIndirectFick(inputs);
   if (inputs.useFick) {
-    const fick = calcFickCo(inputs.vo2, inputs.cao2, inputs.cvo2);
-    if (isPresent(fick)) return fick;
+    if (isPresent(fick.co)) return { co: fick.co, source: 'fick', fick };
   }
-  if (isPresent(inputs.co)) return inputs.co;
-  if (isPresent(inputs.ci) && isPresent(inputs.bsa) && inputs.bsa > 0) {
-    return inputs.ci * inputs.bsa;
+  if (isPresent(inputs.co)) return { co: inputs.co, source: 'thermo', fick };
+  const bsa = fick.bsa;
+  if (isPresent(inputs.ci) && isPresent(bsa) && bsa > 0) {
+    return { co: inputs.ci * bsa, source: 'ci_bsa', fick };
   }
-  return null;
+  return { co: null, source: null, fick };
 }
 
 /** Resolve CI from direct entry or CO/BSA. */
-export function resolveCi(inputs: HemodynamicsInputs, co: number | null): number | null {
-  if (isPresent(inputs.ci)) return inputs.ci;
-  if (isPresent(co) && isPresent(inputs.bsa) && inputs.bsa > 0) return co / inputs.bsa;
+export function resolveCi(
+  inputs: HemodynamicsInputs,
+  co: number | null,
+  bsa: number | null,
+  coSource: DerivedMetrics['coSource'],
+): number | null {
+  // When Fick is the CO source, prefer Fick CI (CO/BSA) over a stale thermo CI entry
+  if (coSource === 'fick' && isPresent(co) && isPresent(bsa) && bsa > 0) return co / bsa;
+  if (isPresent(inputs.ci) && coSource !== 'fick') return inputs.ci;
+  if (isPresent(co) && isPresent(bsa) && bsa > 0) return co / bsa;
   return null;
 }
 
@@ -140,16 +269,18 @@ export function calcCvpPcwp(rap: number | null, pcwp: number | null): number | n
 export function deriveAll(inputs: HemodynamicsInputs): DerivedMetrics {
   const map = calcMap(inputs.sbp, inputs.dbp, inputs.map);
   const mpap = calcMpap(inputs.pasp, inputs.padp, inputs.mpap);
-  const co = resolveCo(inputs);
-  const ci = resolveCi(inputs, co);
+  const { co, source, fick } = resolveCo(inputs);
+  const bsa = fick.bsa;
+  const ci = resolveCi(inputs, co, bsa, source);
   const sv = calcSv(co, inputs.hr);
-  const svi = calcSvi(sv, inputs.bsa);
+  const svi = calcSvi(sv, bsa);
 
   return {
     map: round(map, 1),
     mpap: round(mpap, 1),
     co: round(co, 2),
     ci: round(ci, 2),
+    bsa: round(bsa, 2),
     sv: round(sv, 1),
     svi: round(svi, 1),
     svr: round(calcSvr(map, inputs.rap, co), 0),
@@ -163,6 +294,11 @@ export function deriveAll(inputs: HemodynamicsInputs): DerivedMetrics {
     rvswi: round(calcRvswi(mpap, inputs.rap, svi), 2),
     lvswi: round(calcLvswi(map, inputs.pcwp, svi), 2),
     cvpPcwpRatio: round(calcCvpPcwp(inputs.rap, inputs.pcwp), 2),
+    fickVo2: round(fick.vo2, 1),
+    fickAvO2Diff: round(fick.avO2Diff, 1),
+    fickCo: round(fick.co, 2),
+    fickCi: round(fick.ci, 2),
+    coSource: source,
   };
 }
 
@@ -327,9 +463,15 @@ export function demoColdWetShock(): HemodynamicsInputs {
     dbp: 54,
     map: null,
     useFick: false,
-    vo2: null,
-    cao2: null,
-    cvo2: null,
+    hb: 12.5,
+    sao2: 98,
+    svo2: 55,
+    o2Binding: DEFAULT_O2_BINDING,
+    vo2Mode: 'estimated',
+    vo2Constant: DEFAULT_VO2_CONSTANT,
+    vo2Measured: null,
+    ageYears: 65,
+    sex: 'male',
     hypotensive: true,
     hypoperfusion: true,
     escalatingSupport: false,
@@ -352,14 +494,22 @@ function emptyFromDemo(): HemodynamicsInputs {
     co: null,
     ci: null,
     bsa: null,
+    heightCm: null,
+    weightKg: null,
     hr: null,
     sbp: null,
     dbp: null,
     map: null,
     useFick: false,
-    vo2: null,
-    cao2: null,
-    cvo2: null,
+    hb: null,
+    sao2: null,
+    svo2: null,
+    o2Binding: DEFAULT_O2_BINDING,
+    vo2Mode: 'estimated',
+    vo2Constant: DEFAULT_VO2_CONSTANT,
+    vo2Measured: null,
+    ageYears: null,
+    sex: null,
     hypotensive: false,
     hypoperfusion: false,
     escalatingSupport: false,

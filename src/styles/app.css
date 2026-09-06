@@ -311,3 +311,71 @@ header .subtitle {
   z-index: 50;
   box-shadow: 0 8px 30px rgba(0,0,0,0.35);
 }
+
+
+/* Indirect Fick panel */
+.fick-card .fick-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.fick-card .fick-header h2 {
+  margin: 0;
+}
+
+.fick-blurb {
+  margin: 0 0 0.75rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.hint {
+  margin: 0.35rem 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.hint.ok-hint { color: var(--ok); }
+.hint.warn-hint { color: var(--warn); }
+
+.metric .unit {
+  font-size: 0.7rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.formula-help {
+  font-size: 0.75rem;
+  color: var(--info);
+}
+
+.formula-help summary {
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+}
+
+.formula-pre {
+  margin: 0.5rem 0 0;
+  padding: 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+button.chip {
+  appearance: none;
+  font-family: inherit;
+}
